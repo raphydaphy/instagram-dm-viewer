@@ -53,7 +53,7 @@ module IGParser
 
 	class Conversation
 		attr_reader :participants, :id, :totals, :weekly_totals
-		attr_accessor :title, :graphs
+		attr_accessor :title, :graphs, :first_msg, :last_msg, :daily_messages
 
 		def initialize(id, username, participants, messages)
 			@id = id
@@ -92,9 +92,25 @@ module IGParser
 				end
 			end
 
+			first_msg = @first_msg
+			if (other.first_msg < first_msg)
+				first_msg = other.first_msg
+			end
+
+			last_msg = @last_msg
+			if (other.last_msg > last_msg)
+				last_msg = other.last_msg
+			end
+
+			daily_messages = (@daily_messages + other.daily_messages) / 2
+
 			convo = Conversation.new(@id, @username, @participants.clone, nil)
 			convo.set_totals(totals, weekly_totals)
 			convo.title = @title
+
+			convo.first_msg = first_msg
+			convo.last_msg = last_msg
+			convo.daily_messages = daily_messages
 
 			return convo
 		end
@@ -117,7 +133,7 @@ module IGParser
 
 		def make_graph
 			g = Gruff::StackedBar.new(1000)
-			g.title = "Weekly Stats"
+			g.hide_title = true
 			g.theme = {
 				colors: %w[red aqua],
 	      marker_color: 'grey',
@@ -141,17 +157,25 @@ module IGParser
 			g.write("graphs/#{@id}.png")
 		end
 
+		private
+
 		def process_messages(messages)
+			@first_msg = Date.today
+
 			messages.length.times do |idx|
 				message = messages[idx]
 				sender = message["sender"]
-				date = Date.parse(message["created_at"]).to_time
+				date = Date.parse(message["created_at"])
+
+				if (date < @first_msg)
+					@first_msg = date
+				end
 
 				# Always try to add the participant incase they are new
 				add_participant(sender)
 
 				# Track messages per-week (used for graphing)
-				week_key = (date - TWENTY_TEN) / 1.week
+				week_key = ((date.to_time - TWENTY_TEN) / 1.week).to_i
 				week_totals = weekly_totals[week_key]
 
 				if (!@weekly_totals.key?(week_key))
@@ -190,9 +214,26 @@ module IGParser
 					end
 				end
 			end
-		end
 
-		private
+			if (messages.length > 0)
+				@last_msg = Date.parse(messages[0]["created_at"])
+
+				first_week = ((@first_msg.to_time - TWENTY_TEN) / 1.week).to_i
+				last_week = ((@last_msg.to_time - TWENTY_TEN) / 1.week).to_i
+				
+				(first_week..last_week).each do |week|
+					if (!@weekly_totals.key?(week))
+						@weekly_totals[week] = MessageTotals.new(@participants)
+					end
+				end
+
+				@daily_messages = (@totals.total.to_f / (@last_msg - @first_msg)).round(2)
+			else
+				@last_msg = Date.today
+				@daily_messages = 0
+			end
+
+		end
 
 		def make_title
 			if (@participants.length > 2)

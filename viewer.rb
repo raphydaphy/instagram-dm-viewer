@@ -8,7 +8,7 @@ end
 
 class Window < Gosu::Window
 	def initialize(convo_list, username)
-		super(720, 480, {:resizable => true})
+		super(720, 600, {:resizable => true})
 
 		self.caption = "Instagram DM Stats"
 
@@ -82,10 +82,17 @@ class Window < Gosu::Window
 				convo_info += "\nLikes Received: #{convo.totals.likes_received[@username]}"
 
 				graph_scale = (self.width - sidebar_width - 30) / 1000.0
-				convo.graphs["weekly_totals"].draw(sidebar_width + 15, 160, ZOrder::TOP, graph_scale, graph_scale)
 			end
 
+			convo_info += convo.first_msg.strftime("\n\nFirst Message: %d/%m/%Y")
+			convo_info += convo.last_msg.strftime("\nLast Message: %d/%m/%Y")
+			convo_info += "\nDaily Messages: #{convo.daily_messages}"
+
 			@font.draw_markup(convo_info, sidebar_width + 15, 40, ZOrder::TOP, 1, 1, @text_color)
+
+			if (!is_group)
+				convo.graphs["weekly_totals"].draw(sidebar_width + 15, 215, ZOrder::TOP, graph_scale, graph_scale)
+			end
 		end
 	end
 

@@ -1,82 +1,16 @@
 require "rubygems"
 require "gosu"
-require "json"
-
-print("Enter your instagram username: ")
-$username = gets.chomp()
-
-class Conversation
-	attr_reader :participants, :id, :messages
-	attr_accessor :title
-
-	def initialize(id, participants, messages)
-		@id = id
-		@participants = participants
-		@messages = messages
-
-		if (participants.length > 2)
-			@title = "Group (#{participants.length})"
-		else
-			@title = @participants[0]
-			if (@title == $username && @participants.length > 1)
-				@title = @participants[1]
-			end
-
-			if (@title.include?("__deleted__"))
-				@title = "Deleted User"
-			end
-		end
-	end
-end
-
-def read_convos(filename)
-	messages_hash = JSON.parse(File.read(filename))
-
-	convo_list = Array.new
-	cur_id = 0
-
-	messages_hash.each do |convo_hash|
-		convo_participants = convo_hash["participants"]
-		convo_messages = convo_hash["conversation"]
-
-		already_exists = false
-
-		# Try to merge conversations with the same people
-		convo_list.each do |convo|
-			if (convo.participants.length == convo_participants.length)
-				already_exists = true
-				convo.participants.each do |participant|
-					if (!convo_participants.include?(participant))
-						already_exists = false
-						break
-					end
-				end
-
-				if (already_exists)
-					convo.messages << convo_messages
-					break
-				end
-			end
-		end
-
-		if (!already_exists)
-			convo_list << Conversation.new(cur_id, convo_participants, convo_messages)
-			cur_id += 1
-		end
-	end
-
-	return convo_list
-end
+require "./parser.rb"
 
 module ZOrder
   BG, MIDDLE, TOP = *0..2
 end
 
 class Window < Gosu::Window
-	def initialize
+	def initialize(convo_list, username)
 		super(720, 480, {:resizable => true})
 
-		self.caption = "Instagram DM Viewer"
+		self.caption = "Instagram DM Stats"
 
 		@background_color = Gosu::Color::WHITE
 
@@ -86,7 +20,9 @@ class Window < Gosu::Window
 		@sidebar_hover_color = Gosu::Color.argb(0xff_e6e6e6)
 		@text_color = Gosu::Color::BLACK
 
-		@convo_list = read_convos("data/messages.json")
+		@username = username
+
+		@convo_list = convo_list
 		@selected_convo = -1
 
 		@sidebar_scroll = 0
@@ -98,7 +34,6 @@ class Window < Gosu::Window
 	end
 
 	def draw_sidebar
-
 		sidebar_width = self.calc_sidebar_width
 		sidebar_y = 55 - @sidebar_scroll
 
@@ -131,15 +66,25 @@ class Window < Gosu::Window
 
 			@heading_font.draw_markup(long_title, sidebar_width + 15, 10, ZOrder::TOP, 1, 1, @text_color)
 
-			convo_info = "Total Messages: #{convo.messages.length}"
+			convo_info = "Total Messages: #{convo.totals.total}"
+			convo_info += "\nSent: #{convo.totals.sent}"
+			convo_info += "\nReceived: #{convo.totals.received}"
+
+			convo_info += "\n\nTotal Likes: #{convo.totals.total_likes}"
 
 			if (is_group)
 				convo_info += "\n\nParticipants:"
 				convo.participants.each do |participant|
-					convo_info += "\n - #{participant}"
+					convo_info += "\n - #{participant} (#{convo.totals.likes_received[participant]}/#{convo.totals.likes_given[participant]} likes)"
 				end
+			else
+				convo_info += "\nLikes Given: #{convo.totals.likes_given[@username]}"
+				convo_info += "\nLikes Received: #{convo.totals.likes_received[@username]}"
+
+				graph_scale = (self.width - sidebar_width - 30) / 1000.0
+				convo.graphs["weekly_totals"].draw(sidebar_width + 15, 160, ZOrder::TOP, graph_scale, graph_scale)
 			end
-			
+
 			@font.draw_markup(convo_info, sidebar_width + 15, 40, ZOrder::TOP, 1, 1, @text_color)
 		end
 	end
@@ -183,4 +128,20 @@ class Window < Gosu::Window
 	end
 end
 
-Window.new.show()
+print("Enter your Instagram username: ")
+username = gets.chomp()
+
+convo_list = IGParser::read_convos("data/messages.json", username)
+
+if (!File.exists?("graphs"))
+	Dir.mkdir("graphs")
+	convo_list.each do |convo|
+		convo.make_graph()
+	end
+end
+
+convo_list.each do |convo|
+	convo.graphs["weekly_totals"] = Gosu::Image.new("graphs/" + convo.id.to_s() + ".png")
+end
+
+Window.new(convo_list, username).show()

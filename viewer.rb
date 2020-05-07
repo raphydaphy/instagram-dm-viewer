@@ -6,19 +6,24 @@ print("Enter your instagram username: ")
 $username = gets.chomp()
 
 class Conversation
-	attr_reader :participants, :id
+	attr_reader :participants, :id, :messages
 	attr_accessor :title
 
-	def initialize(id, participants)
+	def initialize(id, participants, messages)
 		@id = id
 		@participants = participants
+		@messages = messages
 
-		if (participants.length != 2)
+		if (participants.length > 2)
 			@title = "Group (#{participants.length})"
 		else
 			@title = @participants[0]
-			if (@title == $username)
+			if (@title == $username && @participants.length > 1)
 				@title = @participants[1]
+			end
+
+			if (@title.include?("__deleted__"))
+				@title = "Deleted User"
 			end
 		end
 	end
@@ -26,11 +31,38 @@ end
 
 def read_convos(filename)
 	messages_hash = JSON.parse(File.read(filename))
-	convo_list = Array.new
 
-	messages_hash.length.times do |id|
-		convo_hash = messages_hash[id]
-		convo_list << Conversation.new(id, convo_hash["participants"])
+	convo_list = Array.new
+	cur_id = 0
+
+	messages_hash.each do |convo_hash|
+		convo_participants = convo_hash["participants"]
+		convo_messages = convo_hash["conversation"]
+
+		already_exists = false
+
+		# Try to merge conversations with the same people
+		convo_list.each do |convo|
+			if (convo.participants.length == convo_participants.length)
+				already_exists = true
+				convo.participants.each do |participant|
+					if (!convo_participants.include?(participant))
+						already_exists = false
+						break
+					end
+				end
+
+				if (already_exists)
+					convo.messages << convo_messages
+					break
+				end
+			end
+		end
+
+		if (!already_exists)
+			convo_list << Conversation.new(cur_id, convo_participants, convo_messages)
+			cur_id += 1
+		end
 	end
 
 	return convo_list
@@ -48,9 +80,11 @@ class Window < Gosu::Window
 
 		@background_color = Gosu::Color::WHITE
 
-		@sidebar_font = Gosu::Font.new(15)
-		@sidebar_heading_font = Gosu::Font.new(20, {:bold => true})
+		@font = Gosu::Font.new(15)
+		@heading_font = Gosu::Font.new(20, {:bold => true})
+
 		@sidebar_hover_color = Gosu::Color.argb(0xff_e6e6e6)
+		@text_color = Gosu::Color::BLACK
 
 		@convo_list = read_convos("data/messages.json")
 		@selected_convo = -1
@@ -64,6 +98,7 @@ class Window < Gosu::Window
 	end
 
 	def draw_sidebar
+
 		sidebar_width = self.calc_sidebar_width
 		sidebar_y = 55 - @sidebar_scroll
 
@@ -77,12 +112,36 @@ class Window < Gosu::Window
 				Gosu.draw_rect(0, sidebar_y - 7.5, sidebar_width, 30, @sidebar_hover_color, ZOrder::MIDDLE)
 			end
 
-			@sidebar_font.draw_markup(convo.title, 10, sidebar_y, ZOrder::TOP, 1, 1, Gosu::Color::BLACK)
+			@font.draw_markup(convo.title, 10, sidebar_y, ZOrder::TOP, 1, 1, @text_color)
 			sidebar_y += 30
 		end
 
 		Gosu.draw_rect(0, 0, sidebar_width, 40, Gosu::Color::WHITE, ZOrder::TOP)
-		@sidebar_heading_font.draw_markup("Conversations", 10, 10, ZOrder::TOP, 1, 1, Gosu::Color::BLACK)
+		@heading_font.draw_markup("Conversations", 10, 10, ZOrder::TOP, 1, 1, @text_color)
+
+		if (@selected_convo != -1)
+			convo = @convo_list[@selected_convo]
+			is_group = convo.participants.length > 2
+
+			long_title = "Conversation with #{convo.title}"
+
+			if (is_group)
+				long_title = "Unnamed group with #{convo.participants.length} members"
+			end
+
+			@heading_font.draw_markup(long_title, sidebar_width + 15, 10, ZOrder::TOP, 1, 1, @text_color)
+
+			convo_info = "Total Messages: #{convo.messages.length}"
+
+			if (is_group)
+				convo_info += "\n\nParticipants:"
+				convo.participants.each do |participant|
+					convo_info += "\n - #{participant}"
+				end
+			end
+			
+			@font.draw_markup(convo_info, sidebar_width + 15, 40, ZOrder::TOP, 1, 1, @text_color)
+		end
 	end
 
 	def draw

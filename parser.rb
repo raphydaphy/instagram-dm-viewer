@@ -1,12 +1,24 @@
 require "rubygems"
+
+# Generate graphs and images
 require "gruff"
+require "gosu"
+
+# Parse message data
 require "json"
 require "date"
 require 'active_support/core_ext/numeric/time'
 
+# Interact with Instagram API
+require "net/http"
+require 'uri'
+require "open-uri"
+
 module IGParser
 	# Instagram was released in 2010
 	TWENTY_TEN = Date.new(2010, 1, 1).to_time
+
+	$user_cache = Hash.new
 
 	class MessageTotals
 		attr_accessor :total, :participants, :sent, :received, :total_likes, :likes_given, :likes_received, :detailed_likes
@@ -79,6 +91,48 @@ module IGParser
 		end
 	end
 
+	class User
+		attr_reader :username, :name, :bio, :pfp, :followers, :following
+
+		def initialize(username)
+			@username = username
+
+			response = Net::HTTP.get(URI.parse("https://www.instagram.com/#{@username}/?__a=1"))
+
+			puts response
+
+			info = nil
+
+			begin
+				info = JSON.parse(response)
+			rescue
+				puts "Invalid response when fetching profile for #{username}: #{response}"
+				@name, @bio = "Invalid User", "Invalid Bio"
+				@followers = @following = 0
+				return
+			end
+
+			if (info.key?("graphql") && info["graphql"].key?("user"))
+				user_info = info["graphql"]["user"]
+
+				@name = user_info["full_name"]
+				@bio = user_info["biography"]
+				@followers = user_info["edge_followed_by"]
+				@following = user_info["edge_follow"]
+
+				if (!File.exists?("cache/icons/#{username}.jpg"))
+					pfp_url = user_info["profile_pic_url"]
+
+					File.open("cache/icons/#{username}.jpg", "wb") do |file|
+						file.write(open(pfp_url).read())
+					end
+				end
+					
+				@pfp = Gosu::Image.new("cache/icons/#{username}.jpg")
+			end
+		end
+	end
+
 	class Conversation
 		attr_reader :participants, :id, :totals, :weekly_totals
 		attr_accessor :title, :graphs, :first_msg, :last_msg, :daily_messages
@@ -93,6 +147,12 @@ module IGParser
 
 			# Populated in viewer.rb
 			@graphs = Hash.new
+
+			@participants.each do |participant|
+				if (!$user_cache.key?(participant))
+					$user_cache[participant] = User.new(participant)
+				end
+			end
 
 			if (messages)
 				process_messages(messages)
@@ -154,12 +214,16 @@ module IGParser
 				@weekly_totals.each do |week_key, week_totals|
 					week_totals.add_participant(username)
 				end
+
+				if (!$user_cache.key?(username))
+					$user_cache[username] = User.new(username)
+				end
 			end
 		end
 
 		def make_graphs
-			self.weekly_totals_graph.write("graphs/weekly-totals-#{@id}.png")
-			self.likes_graph.write("graphs/likes-#{@id}.png")
+			self.weekly_totals_graph.write("cache/graphs/weekly-totals-#{@id}.png")
+			self.likes_graph.write("cache/graphs/likes-#{@id}.png")
 		end
 
 		def likes_graph
@@ -331,8 +395,32 @@ module IGParser
 		end
 	end
 
+	def self.save_user_cache()
+		users = Array.new
+
+		$user_cache.each do |username, user|
+			users << {
+				"username" => user.username, 
+				"name" => user.name,
+				"bio" => user.bio,
+				"pfp" => "icons/#{username}.jpg",
+				"followers" => user.followers, 
+				"following" => user.following
+			}
+		end
+
+		File.open("cache/users.json", "w") do |file|
+			file.write(users.to_json)
+		end
+	end
+
 	def self.read_convos(filename, username)
 		messages_hash = JSON.parse(File.read(filename))
+
+		if (!File.exists?("cache"))
+			Dir.mkdir("cache")
+			Dir.mkdir("cache/icons")
+		end
 
 		convo_list = Array.new
 		cur_id = 0
@@ -367,6 +455,8 @@ module IGParser
 				cur_id += 1
 			end
 		end
+
+		self.save_user_cache()
 
 		return convo_list
 	end

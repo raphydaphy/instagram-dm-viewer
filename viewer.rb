@@ -184,16 +184,16 @@ username = gets.chomp()
 
 convo_list = IGParser::read_convos("data/messages.json", username)
 
-if (!File.exists?("graphs"))
-	Dir.mkdir("graphs")
+if (!File.exists?("cache/graphs"))
+	Dir.mkdir("cache/graphs")
 	convo_list.each do |convo|
 		convo.make_graphs()
 	end
 end
 
 convo_list.each do |convo|
-	convo.graphs["weekly_totals"] = Gosu::Image.new("graphs/weekly-totals-" + convo.id.to_s() + ".png")
-	convo.graphs["likes"] = Gosu::Image.new("graphs/likes-" + convo.id.to_s() + ".png")
+	convo.graphs["weekly_totals"] = Gosu::Image.new("cache/graphs/weekly-totals-" + convo.id.to_s() + ".png")
+	convo.graphs["likes"] = Gosu::Image.new("cache/graphs/likes-" + convo.id.to_s() + ".png")
 end
 
 Window.new(convo_list, username).show()

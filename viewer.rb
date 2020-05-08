@@ -71,10 +71,16 @@ class Window < Gosu::Window
 			convo = @convo_list[@selected_convo]
 			is_group = convo.participants.length > 2
 
-			page_title = "Conversation with #{convo.title}"
+			page_title = "Conversation"
 
 			if (is_group)
 				page_title = "Unnamed group with #{convo.participants.length} members"
+			else
+				user = convo.users[convo.participants[0]]
+				if (user.username == @username && convo.users.length > 1)
+					user = convo.users[convo.participants[1]]
+				end
+				page_title = "Conversation with #{user.name}"
 			end
 
 			case @info_page

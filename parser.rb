@@ -94,19 +94,27 @@ module IGParser
 	class User
 		attr_reader :username, :name, :bio, :pfp, :followers, :following
 
-		def initialize(username)
+		def initialize(username, name=nil, bio=nil, pfp=nil, followers=nil, following=nil)
 			@username = username
 
-			response = Net::HTTP.get(URI.parse("https://www.instagram.com/#{@username}/?__a=1"))
+			if (name)
+				@name = name
+				@bio = bio
+				@pfp = pfp
+				@followers = followers
+				@following = following
+				return
+			end
 
-			puts response
+			puts "Fetching profile for #{username}..."
+
+			response = Net::HTTP.get(URI.parse("https://www.instagram.com/#{@username}/?__a=1"))
 
 			info = nil
 
 			begin
 				info = JSON.parse(response)
 			rescue
-				puts "Invalid response when fetching profile for #{username}: #{response}"
 				@name, @bio = "Invalid User", "Invalid Bio"
 				@followers = @following = 0
 				return
@@ -134,13 +142,15 @@ module IGParser
 	end
 
 	class Conversation
-		attr_reader :participants, :id, :totals, :weekly_totals
+		attr_reader :participants, :users, :id, :totals, :weekly_totals
 		attr_accessor :title, :graphs, :first_msg, :last_msg, :daily_messages
 
 		def initialize(id, username, participants, messages)
 			@id = id
 			@username = username
+
 			@participants = participants
+			@users = Hash.new
 
 			@totals = MessageTotals.new(@participants)
 			@weekly_totals = Hash.new
@@ -150,7 +160,9 @@ module IGParser
 
 			@participants.each do |participant|
 				if (!$user_cache.key?(participant))
-					$user_cache[participant] = User.new(participant)
+					@users[participant] = $user_cache[participant] = User.new(participant)
+				else
+					@users[participant] = $user_cache[participant]
 				end
 			end
 
@@ -216,7 +228,9 @@ module IGParser
 				end
 
 				if (!$user_cache.key?(username))
-					$user_cache[username] = User.new(username)
+					@users[username] = $user_cache[username] = User.new(username)
+				else
+					@users[username] = $user_cache[username]
 				end
 			end
 		end
@@ -395,11 +409,11 @@ module IGParser
 		end
 	end
 
-	def self.save_user_cache()
-		users = Array.new
+	def self.save_user_cache(user_cache)
+		json_users = Array.new
 
-		$user_cache.each do |username, user|
-			users << {
+		user_cache.each do |username, user|
+			json_users << {
 				"username" => user.username, 
 				"name" => user.name,
 				"bio" => user.bio,
@@ -410,8 +424,25 @@ module IGParser
 		end
 
 		File.open("cache/users.json", "w") do |file|
-			file.write(users.to_json)
+			file.write(json_users.to_json)
 		end
+	end
+
+	def self.read_user_cache()
+		json_users = JSON.parse(File.read("cache/users.json"))
+		user_cache = Hash.new
+
+		json_users.each do |u|
+			pfp = nil
+			pfp_file = "cache/#{u["pfp"]}"
+
+			if (File.exists?(pfp_file))
+				pfp = Gosu::Image.new(pfp_file)
+			end
+			user_cache[u["username"]] = User.new(u["username"], u["name"], u["bio"], pfp, u["followers"], u["following"])
+		end
+
+		return user_cache
 	end
 
 	def self.read_convos(filename, username)
@@ -420,6 +451,8 @@ module IGParser
 		if (!File.exists?("cache"))
 			Dir.mkdir("cache")
 			Dir.mkdir("cache/icons")
+		elsif (File.exists?("cache/users.json"))
+			$user_cache = self.read_user_cache
 		end
 
 		convo_list = Array.new
@@ -456,7 +489,9 @@ module IGParser
 			end
 		end
 
-		self.save_user_cache()
+		if (!File.exists?("cache/users.json"))
+			self.save_user_cache($user_cache)
+		end
 
 		return convo_list
 	end

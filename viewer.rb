@@ -4,6 +4,7 @@ require "./parser.rb"
 require "./gui.rb"
 
 TOTAL_PAGES = 2
+SIDEBAR_LISTING_HEIGHT = 50
 
 class Window < Gosu::Window
 	def initialize(convo_list, username)
@@ -12,6 +13,9 @@ class Window < Gosu::Window
 		self.caption = "Instagram DM Stats"
 
 		@background_color = Gosu::Color::WHITE
+
+		@group_frame = Gosu::Image.new("assets/group_frame.png")
+		@frame_scale = 40 / 150.0
 
 		@font = Gosu::Font.new(15)
 		@heading_font = Gosu::Font.new(20, {:bold => true})
@@ -25,7 +29,7 @@ class Window < Gosu::Window
 		@selected_convo = -1
 
 		@sidebar_scroll = 0
-		@max_scroll = @convo_list.length * 30
+		@max_scroll = @convo_list.length * SIDEBAR_LISTING_HEIGHT
 
 		arrow_font = Gosu::Font.new(20)
 		sidebar_width = self.calc_sidebar_width
@@ -37,7 +41,7 @@ class Window < Gosu::Window
 	end
 
 	def calc_sidebar_width
-		return [self.width * 0.2, 150].max
+		return [self.width * 0.3, 150].max
 	end
 
 	def draw_sidebar(sidebar_width)
@@ -47,14 +51,43 @@ class Window < Gosu::Window
 		Gosu.draw_rect(0, 40, sidebar_width, 1, Gosu::Color::BLACK, Gui::ZOrder::MIDDLE)
 
 		@convo_list.each do |convo|
-			hovered = (mouse_x >= 0 && mouse_x < sidebar_width && mouse_y >= sidebar_y - 7.5 && mouse_y < sidebar_y + 22.5)
+			hovered = (mouse_x >= 0 && mouse_x < sidebar_width && mouse_y >= sidebar_y - 7.5 && mouse_y < sidebar_y + SIDEBAR_LISTING_HEIGHT - 7.5)
+			special = convo.id == @selected_convo || hovered
 
-			if (convo.id == @selected_convo || hovered)
-				Gosu.draw_rect(0, sidebar_y - 7.5, sidebar_width, 30, @sidebar_hover_color, Gui::ZOrder::MIDDLE)
+			if (special)
+				Gosu.draw_rect(0, sidebar_y - 7.5, sidebar_width, SIDEBAR_LISTING_HEIGHT, @sidebar_hover_color, Gui::ZOrder::MIDDLE)
 			end
 
-			@font.draw_markup(convo.title, 10, sidebar_y, Gui::ZOrder::TOP, 1, 1, @text_color)
-			sidebar_y += 30
+			@font.draw_markup("<b>" + convo.title + "</b>", 55, sidebar_y + 5, Gui::ZOrder::TOP, 1, 1, @text_color)
+
+			user = convo.users[convo.display_users[0]]
+			other_user = nil
+			if (convo.display_users.length > 1)
+				other_user = convo.users[convo.display_users[1]]
+			end
+
+			if (user.pfp)
+				if (convo.participants.length > 2 && other_user)
+					scale = 40.0 * (107.0 / 150.0) / user.pfp.width.to_f
+					second_offset = 40.0 * (43.0 / 150.0)
+					other_user.pfp.draw(10, sidebar_y, Gui::ZOrder::TOP, scale, scale)
+					user.pfp.draw(10 + second_offset, sidebar_y + second_offset, Gui::ZOrder::TOP, scale, scale)
+					@group_frame.draw(10, sidebar_y, Gui::ZOrder::TOP, @frame_scale, @frame_scale, special ? @sidebar_hover_color : Gosu::Color::WHITE)
+				else
+					scale = 40 / user.pfp.width.to_f
+					user.pfp.draw(10, sidebar_y, Gui::ZOrder::TOP, scale, scale)
+				end
+			end
+
+			convo_desc = user.name[0..20]
+
+			if (convo.participants.length > 2)
+				convo_desc = "#{convo.totals.total} Messages"
+			end
+
+			@font.draw_markup(convo_desc, 55, sidebar_y + 20, Gui::ZOrder::TOP, 1, 1, @text_color)
+
+			sidebar_y += SIDEBAR_LISTING_HEIGHT
 		end
 
 		Gosu.draw_rect(0, 0, sidebar_width, 40, Gosu::Color::WHITE, Gui::ZOrder::TOP)
@@ -62,7 +95,7 @@ class Window < Gosu::Window
 	end
 
 	def draw_graph(convo, graph, sidebar_width)
-		graph_scale = (self.width - sidebar_width - 30) / 1000.0
+		graph_scale = (self.width - sidebar_width - 30) / convo.graphs[graph].width.to_f
 		convo.graphs[graph].draw(sidebar_width + 15, 40, Gui::ZOrder::TOP, graph_scale, graph_scale)
 	end
 
@@ -77,17 +110,18 @@ class Window < Gosu::Window
 				page_title = "Unnamed group with #{convo.participants.length} members"
 			else
 				user = convo.users[convo.participants[0]]
-				if (user.username == @username && convo.users.length > 1)
+				if (user.username == @username && convo.participants.length > 1)
 					user = convo.users[convo.participants[1]]
 				end
-				page_title = "Conversation with #{user.name}"
+
+				page_title = "Conversation with #{user.name.length == 0 ? user.username : user.name}"
 			end
 
 			case @info_page
 			when 0
 				convo_info = "<b>Conversation Stats</b>"
 				convo_info += "\n\nTotal Messages: #{convo.totals.total}"
-				convo_info += "\nSent: #{convo.totals.sent}"
+				convo_info += "\nSent: #{convo.totals.total - convo.totals.received}"
 				convo_info += "\nReceived: #{convo.totals.received}"
 
 				convo_info += "\n\nTotal Likes: #{convo.totals.total_likes}"
@@ -166,7 +200,7 @@ class Window < Gosu::Window
 					@sidebar_scroll = @max_scroll - self.height + 55
 				end
 			elsif (id == Gosu::MS_LEFT)
-				hovered_index = ((mouse_y + @sidebar_scroll - 47.5) / 30).floor
+				hovered_index = ((mouse_y + @sidebar_scroll - 47.5) / SIDEBAR_LISTING_HEIGHT).floor
 				if (hovered_index < @convo_list.length)
 					@selected_convo = hovered_index
 				end

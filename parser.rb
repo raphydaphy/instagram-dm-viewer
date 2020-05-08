@@ -1,8 +1,9 @@
 require "rubygems"
 
-# Generate graphs and images
+# Image managment
 require "gruff"
 require "gosu"
+require "mini_magick"
 
 # Parse message data
 require "json"
@@ -25,10 +26,10 @@ module IGParser
 
 		def initialize(participants)
 			@participants = Array.new
-			@total = @sent = @received = @total_likes = 0
+			@total = @received = @total_likes = 0
 
 			@likes_given, @likes_received = Hash.new, Hash.new
-			@detailed_likes = Hash.new
+			@detailed_likes, @sent = Hash.new, Hash.new
 
 			participants.each do |participant|
 				add_participant(participant)
@@ -40,6 +41,7 @@ module IGParser
 
 			@likes_given[participant] = 0
 			@likes_received[participant] = 0
+			@sent[participant] = 0
 
 			likes_hash = Hash.new
 
@@ -58,9 +60,17 @@ module IGParser
 			totals = MessageTotals.new(Array.new)
 
 			totals.total = @total + other.total
-			totals.sent = @sent + other.sent
 			totals.received = @received + other.received
 			totals.total_likes = @total_likes + other.total_likes
+
+			# TODO: deduplication here
+
+			@sent.each do |user|
+				totals.sent[user] = @sent[user]
+				if (other.sent.key?(user))
+					totals.sent[user] += other.sent[user]
+				end
+			end
 
 			@likes_given.each do |user|
 				totals.likes_given[user] = @likes_given[user]
@@ -128,22 +138,40 @@ module IGParser
 				@followers = user_info["edge_followed_by"]
 				@following = user_info["edge_follow"]
 
-				if (!File.exists?("cache/icons/#{username}.jpg"))
+				if (!File.exists?("cache/icons/#{username}.png"))
 					pfp_url = user_info["profile_pic_url"]
 
-					File.open("cache/icons/#{username}.jpg", "wb") do |file|
-						file.write(open(pfp_url).read())
-					end
+					process_pfp(pfp_url, "cache/icons/#{username}.png")
 				end
 					
-				@pfp = Gosu::Image.new("cache/icons/#{username}.jpg")
+				@pfp = Gosu::Image.new("cache/icons/#{username}.png")
+			end
+		end
+
+		def process_pfp(link, out)
+			# Convert to PNG and resize to a temp file
+			original = MiniMagick::Image.open(link)
+			original.resize("150x150")
+			original.format("png")
+			original.write(out)
+
+			# Apply the circle cutout and add a border
+			MiniMagick::Tool::Convert.new do |icon|
+				icon.size("150x150")
+				icon << "xc:transparent"
+				icon.fill("#9c9c9c")
+				icon.draw("translate 75, 75 circle 0, 0, 75, 0")
+				icon.fill(out)
+				icon.draw("translate 75, 75 circle 0, 0, 73, 0")
+				icon.trim()
+				icon << out
 			end
 		end
 	end
 
 	class Conversation
-		attr_reader :participants, :users, :id, :totals, :weekly_totals
-		attr_accessor :title, :graphs, :first_msg, :last_msg, :daily_messages
+		attr_reader :id, :participants, :users, :totals, :weekly_totals
+		attr_accessor :title, :display_users, :graphs, :first_msg, :last_msg, :daily_messages
 
 		def initialize(id, username, participants, messages)
 			@id = id
@@ -173,6 +201,37 @@ module IGParser
 				# to ensure that users who left group chats
 				# are still included in the user count
 				@title = make_title()
+
+				@display_users = Array.new
+				
+				# Track the two users who sent the most messages
+				first_place = 0
+				first_place_user = nil
+
+				second_place = 0
+				second_place_user = nil
+
+				@totals.sent.each do |user, score|
+					if (score > first_place && (user != @username || @participants.length == 1))
+						first_place = score
+						first_place_user = user
+					elsif (score > second_place && @participants.length > 2)
+						second_place = score
+						second_place_user = user
+					end
+				end
+
+				if (first_place_user)
+					@display_users[0] = first_place_user
+					if (second_place_user)
+						@display_users[1] = second_place_user
+					end
+				else
+					@display_users[0] = @participants[0]
+					if (@display_users[0] == username && participants.length > 1)
+						@display_users[0] = @participants[1]
+					end
+				end
 			end
 		end
 
@@ -206,7 +265,9 @@ module IGParser
 
 			convo = Conversation.new(@id, @username, @participants.clone, nil)
 			convo.set_totals(totals, weekly_totals)
+			
 			convo.title = @title
+			convo.display_users = @display_users
 
 			convo.first_msg = first_msg
 			convo.last_msg = last_msg
@@ -335,13 +396,13 @@ module IGParser
 				week_totals.total += 1
 
 				# Keep track of messages sent vs received
-				if (sender == @username)
-					@totals.sent += 1
-					week_totals.sent += 1
-				else
+				if (sender != @username)
 					@totals.received += 1
-					week_totals.sent += 1
+					week_totals.received += 1
 				end
+					
+				@totals.sent[sender] += 1
+				week_totals.sent[sender] += 1
 
 				# Process any likes that the message might have
 				if (message.key?("likes"))
@@ -417,7 +478,7 @@ module IGParser
 				"username" => user.username, 
 				"name" => user.name,
 				"bio" => user.bio,
-				"pfp" => "icons/#{username}.jpg",
+				"pfp" => "icons/#{username}.png",
 				"followers" => user.followers, 
 				"following" => user.following
 			}
@@ -438,6 +499,8 @@ module IGParser
 
 			if (File.exists?(pfp_file))
 				pfp = Gosu::Image.new(pfp_file)
+			else
+				pfp = Gosu::Image.new("assets/default.png")
 			end
 			user_cache[u["username"]] = User.new(u["username"], u["name"], u["bio"], pfp, u["followers"], u["following"])
 		end

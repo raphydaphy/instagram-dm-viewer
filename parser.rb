@@ -9,17 +9,36 @@ module IGParser
 	TWENTY_TEN = Date.new(2010, 1, 1).to_time
 
 	class MessageTotals
-		attr_accessor :total, :sent, :received, :total_likes, :likes_given, :likes_received
+		attr_accessor :total, :participants, :sent, :received, :total_likes, :likes_given, :likes_received, :detailed_likes
 
 		def initialize(participants)
+			@participants = Array.new
 			@total = @sent = @received = @total_likes = 0
-			@likes_given = Hash.new
-			@likes_received = Hash.new
+
+			@likes_given, @likes_received = Hash.new, Hash.new
+			@detailed_likes = Hash.new
 
 			participants.each do |participant|
-				@likes_given[participant] = 0
-				@likes_received[participant] = 0
+				add_participant(participant)
 			end
+		end
+
+		def add_participant(participant)
+			@participants << participant
+
+			@likes_given[participant] = 0
+			@likes_received[participant] = 0
+
+			likes_hash = Hash.new
+
+			@participants.each do |other_participant|
+				likes_hash[other_participant] = 0
+				if (other_participant != participant)
+					@detailed_likes[other_participant][participant] = 0
+				end
+			end
+
+			@detailed_likes[participant] = likes_hash
 		end
 
 		# Combine two seperate like totals from the same conversation
@@ -30,8 +49,6 @@ module IGParser
 			totals.sent = @sent + other.sent
 			totals.received = @received + other.received
 			totals.total_likes = @total_likes + other.total_likes
-			totals.likes_given = Hash.new
-			totals.likes_received = Hash.new
 
 			@likes_given.each do |user|
 				totals.likes_given[user] = @likes_given[user]
@@ -45,6 +62,17 @@ module IGParser
 				if (other.likes_received.key?(user))
 					totals.likes_received[user] += other.likes_received[user]
 				end
+			end
+
+			@detailed_likes.each do |like_reciever, likes_hash|
+				detailed_likes = Hash.new
+				likes_hash.each do |like_giver|
+					detailed_likes[like_giver] = @detailed_likes[like_reciever][like_giver]
+					if (other.detailed_likes.key?(like_reciever) && other.detailed_likes[like_reciever].key?(like_giver))
+						detailed_likes[like_giver] += other.detailed_likes[like_reciever][like_giver]
+					end
+				end
+				totals.detailed_likes[like_reciever] = detailed_likes
 			end
 
 			return totals
@@ -120,22 +148,64 @@ module IGParser
 		def add_participant(username)
 			if (!@participants.include?(username))
 				@participants << username
-				@totals.likes_given[username] = 0
-				@totals.likes_received[username] = 0
+				@totals.add_participant(username)
 
 				# Retroactivly add the user to previous weekly totals
 				@weekly_totals.each do |week_key, week_totals|
-					week_totals.likes_given[username] = 0
-					week_totals.likes_received[username] = 0
+					week_totals.add_participant(username)
 				end
 			end
 		end
 
-		def make_graph
+		def make_graphs
+			self.weekly_totals_graph.write("graphs/weekly-totals-#{@id}.png")
+			self.likes_graph.write("graphs/likes-#{@id}.png")
+		end
+
+		def likes_graph
 			g = Gruff::StackedBar.new(1000)
 			g.hide_title = true
 			g.theme = {
-				colors: %w[red aqua],
+				colors: %w["#e8de56" "#95e856" "#56e8b5" "#56e8d5" "#56b0e8" "#e89a56" "#9056e8" "#d756e8"],
+	      marker_color: 'grey',
+	      font_color: 'black',
+	      background_colors: "transparent"
+	    }
+
+	    g.labels = @participants
+
+	    labels = Hash.new
+	    idx = 0
+
+	    @participants.each do |participant|
+	    	if (@totals.likes_given[participant] > 0)
+		    	labels[idx] = participant
+		    	idx += 1
+		    end
+
+		    if (@totals.likes_received[participant] > 0)
+		    	detailed_likes = Array.new
+
+		    	@participants.each do |other_participant|
+		    		if (@totals.likes_given[other_participant] > 0)
+		    			detailed_likes << @totals.detailed_likes[participant][other_participant]
+		    		end
+		    	end
+
+		    	g.data(participant, detailed_likes)
+		    end
+	    end
+
+	    g.labels = labels
+
+			return g
+		end
+
+		def weekly_totals_graph
+			g = Gruff::StackedBar.new(1000)
+			g.hide_title = true
+			g.theme = {
+				colors: %w["#eb2a2a" "#4287f5"],
 	      marker_color: 'grey',
 	      font_color: 'black',
 	      background_colors: "transparent"
@@ -154,7 +224,7 @@ module IGParser
 			g.data(:Likes, weekly_likes)
 			g.data(:Messages, weekly_messages)
 
-			g.write("graphs/#{@id}.png")
+			return g
 		end
 
 		private
@@ -211,6 +281,10 @@ module IGParser
 
 						@totals.likes_received[sender] += 1
 						week_totals.likes_received[sender] += 1
+
+						# Detailed likes hash connects sender & like user
+						@totals.detailed_likes[sender][like_user] += 1
+						week_totals.detailed_likes[sender][like_user] += 1
 					end
 				end
 			end

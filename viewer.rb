@@ -1,14 +1,13 @@
 require "rubygems"
 require "gosu"
 require "./parser.rb"
+require "./gui.rb"
 
-module ZOrder
-  BG, MIDDLE, TOP = *0..2
-end
+TOTAL_PAGES = 2
 
 class Window < Gosu::Window
 	def initialize(convo_list, username)
-		super(720, 600, {:resizable => true})
+		super(840, 520, {:resizable => true})
 
 		self.caption = "Instagram DM Stats"
 
@@ -27,81 +26,116 @@ class Window < Gosu::Window
 
 		@sidebar_scroll = 0
 		@max_scroll = @convo_list.length * 30
+
+		arrow_font = Gosu::Font.new(20)
+		sidebar_width = self.calc_sidebar_width
+
+		@left_arrow = Gui::Button.new(sidebar_width + 30, 7.5, 50, 25, arrow_font, "<")
+		@right_arrow = Gui::Button.new(self.width - 80, 7.5, 50, 25, arrow_font, ">")
+
+		@info_page = 0
 	end
 
 	def calc_sidebar_width
 		return [self.width * 0.2, 150].max
 	end
 
-	def draw_sidebar
-		sidebar_width = self.calc_sidebar_width
+	def draw_sidebar(sidebar_width)
 		sidebar_y = 55 - @sidebar_scroll
 
-		Gosu.draw_rect(sidebar_width, 0, 1, self.height, Gosu::Color::BLACK, ZOrder::MIDDLE)
-		Gosu.draw_rect(0, 40, sidebar_width, 1, Gosu::Color::BLACK, ZOrder::MIDDLE)
+		Gosu.draw_rect(sidebar_width, 0, 1, self.height, Gosu::Color::BLACK, Gui::ZOrder::MIDDLE)
+		Gosu.draw_rect(0, 40, sidebar_width, 1, Gosu::Color::BLACK, Gui::ZOrder::MIDDLE)
 
 		@convo_list.each do |convo|
 			hovered = (mouse_x >= 0 && mouse_x < sidebar_width && mouse_y >= sidebar_y - 7.5 && mouse_y < sidebar_y + 22.5)
 
 			if (convo.id == @selected_convo || hovered)
-				Gosu.draw_rect(0, sidebar_y - 7.5, sidebar_width, 30, @sidebar_hover_color, ZOrder::MIDDLE)
+				Gosu.draw_rect(0, sidebar_y - 7.5, sidebar_width, 30, @sidebar_hover_color, Gui::ZOrder::MIDDLE)
 			end
 
-			@font.draw_markup(convo.title, 10, sidebar_y, ZOrder::TOP, 1, 1, @text_color)
+			@font.draw_markup(convo.title, 10, sidebar_y, Gui::ZOrder::TOP, 1, 1, @text_color)
 			sidebar_y += 30
 		end
 
-		Gosu.draw_rect(0, 0, sidebar_width, 40, Gosu::Color::WHITE, ZOrder::TOP)
-		@heading_font.draw_markup("Conversations", 10, 10, ZOrder::TOP, 1, 1, @text_color)
+		Gosu.draw_rect(0, 0, sidebar_width, 40, Gosu::Color::WHITE, Gui::ZOrder::TOP)
+		@heading_font.draw_markup("Conversations", 10, 10, Gui::ZOrder::TOP, 1, 1, @text_color)
+	end
 
+	def draw_graph(convo, graph, sidebar_width)
+		graph_scale = (self.width - sidebar_width - 30) / 1000.0
+		convo.graphs[graph].draw(sidebar_width + 15, 40, Gui::ZOrder::TOP, graph_scale, graph_scale)
+	end
+
+	def draw_convo(sidebar_width)
 		if (@selected_convo != -1)
 			convo = @convo_list[@selected_convo]
 			is_group = convo.participants.length > 2
 
-			long_title = "Conversation with #{convo.title}"
+			page_title = "Conversation with #{convo.title}"
 
 			if (is_group)
-				long_title = "Unnamed group with #{convo.participants.length} members"
+				page_title = "Unnamed group with #{convo.participants.length} members"
 			end
 
-			@heading_font.draw_markup(long_title, sidebar_width + 15, 10, ZOrder::TOP, 1, 1, @text_color)
+			case @info_page
+			when 0
+				convo_info = "<b>Conversation Stats</b>"
+				convo_info += "\n\nTotal Messages: #{convo.totals.total}"
+				convo_info += "\nSent: #{convo.totals.sent}"
+				convo_info += "\nReceived: #{convo.totals.received}"
 
-			convo_info = "Total Messages: #{convo.totals.total}"
-			convo_info += "\nSent: #{convo.totals.sent}"
-			convo_info += "\nReceived: #{convo.totals.received}"
+				convo_info += "\n\nTotal Likes: #{convo.totals.total_likes}"
 
-			convo_info += "\n\nTotal Likes: #{convo.totals.total_likes}"
-
-			if (is_group)
-				convo_info += "\n\nParticipants:"
-				convo.participants.each do |participant|
-					convo_info += "\n - #{participant} (#{convo.totals.likes_received[participant]}/#{convo.totals.likes_given[participant]} likes)"
+				if (is_group)
+					convo_info += "\n\nParticipants:"
+					convo.participants.each do |participant|
+						convo_info += "\n - #{participant} (#{convo.totals.likes_received[participant]}/#{convo.totals.likes_given[participant]} likes)"
+					end
+				else
+					convo_info += "\nLikes Given: #{convo.totals.likes_given[@username]}"
+					convo_info += "\nLikes Received: #{convo.totals.likes_received[@username]}"
 				end
-			else
-				convo_info += "\nLikes Given: #{convo.totals.likes_given[@username]}"
-				convo_info += "\nLikes Received: #{convo.totals.likes_received[@username]}"
 
-				graph_scale = (self.width - sidebar_width - 30) / 1000.0
+				convo_info += convo.first_msg.strftime("\n\nFirst Message: %d/%m/%Y")
+				convo_info += convo.last_msg.strftime("\nLast Message: %d/%m/%Y")
+				convo_info += "\nDaily Messages: #{convo.daily_messages}"
+
+				@font.draw_markup(convo_info, sidebar_width + 15, 40, Gui::ZOrder::TOP, 1, 1, @text_color)
+			when 1
+				page_title = "Weekly Stats"
+				draw_graph(convo, "weekly_totals", sidebar_width)
+			when 2
+				page_title = "Likes Breakdown"
+				draw_graph(convo, "likes", sidebar_width)
 			end
 
-			convo_info += convo.first_msg.strftime("\n\nFirst Message: %d/%m/%Y")
-			convo_info += convo.last_msg.strftime("\nLast Message: %d/%m/%Y")
-			convo_info += "\nDaily Messages: #{convo.daily_messages}"
-
-			@font.draw_markup(convo_info, sidebar_width + 15, 40, ZOrder::TOP, 1, 1, @text_color)
-
-			if (!is_group)
-				convo.graphs["weekly_totals"].draw(sidebar_width + 15, 215, ZOrder::TOP, graph_scale, graph_scale)
+			if (@info_page > 0)
+				@left_arrow.draw()
 			end
+
+			if (@info_page < TOTAL_PAGES)
+				@right_arrow.draw()
+			end
+
+			Gui::draw_centered_string(@heading_font, page_title, sidebar_width / 2 + self.width / 2, 10, @text_color)
 		end
 	end
 
 	def draw
-		Gosu.draw_rect(0, 0, self.width, self.height, @background_color, ZOrder::BG)
-		draw_sidebar()
+		Gosu.draw_rect(0, 0, self.width, self.height, @background_color, Gui::ZOrder::BG)
+
+		sidebar_width = self.calc_sidebar_width
+
+		draw_sidebar(sidebar_width)
+		draw_convo(sidebar_width)
 	end
 
 	def update
+		@left_arrow.x = self.calc_sidebar_width + 30
+		@right_arrow.x = self.width - 80
+
+		@left_arrow.update(mouse_x, mouse_y)
+		@right_arrow.update(mouse_x, mouse_y)
 	end
 
 	def needs_cursor?
@@ -131,6 +165,16 @@ class Window < Gosu::Window
 					@selected_convo = hovered_index
 				end
 	  	end
+		elsif (id == Gosu::MS_LEFT)
+			if (@left_arrow.mouse_over?(mouse_x, mouse_y))
+				if (@info_page > 0)
+					@info_page -= 1
+				end
+			elsif (@right_arrow.mouse_over?(mouse_x, mouse_y))
+				if (@info_page < TOTAL_PAGES)
+					@info_page += 1
+				end
+			end
 		end
 	end
 end
@@ -143,12 +187,13 @@ convo_list = IGParser::read_convos("data/messages.json", username)
 if (!File.exists?("graphs"))
 	Dir.mkdir("graphs")
 	convo_list.each do |convo|
-		convo.make_graph()
+		convo.make_graphs()
 	end
 end
 
 convo_list.each do |convo|
-	convo.graphs["weekly_totals"] = Gosu::Image.new("graphs/" + convo.id.to_s() + ".png")
+	convo.graphs["weekly_totals"] = Gosu::Image.new("graphs/weekly-totals-" + convo.id.to_s() + ".png")
+	convo.graphs["likes"] = Gosu::Image.new("graphs/likes-" + convo.id.to_s() + ".png")
 end
 
 Window.new(convo_list, username).show()
